@@ -4,3 +4,4 @@ __pycache__/
 logs/
 database/register.db
 .env
+logger_code.py
