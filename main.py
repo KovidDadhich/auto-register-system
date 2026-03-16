@@ -7,7 +7,7 @@ def run_scraper():
     scraper = GCMSScraper()
     scraper.initialize_session()
 
-    data = scraper.fetch_case("2015/4545")
+    data = scraper.fetch_case("2009/7852")
 
     print(data)
 

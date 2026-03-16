@@ -39,9 +39,6 @@ logging.basicConfig(
     handlers = [file_handler, console_handler],
 )
 
-
-
-
 # ── Helper: get a named logger ─────────────────────────────────────────────────
 def get_logger(name: str) -> logging.Logger:
     """
