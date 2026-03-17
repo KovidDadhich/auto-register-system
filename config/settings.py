@@ -22,9 +22,19 @@ LOG_FILE_PATH = os.getenv("LOG_FILE", "")
 URL = os.getenv("URL", "")
 
 
-
-MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
+# -----------------------------
+# Scraper Settings
+# -----------------------------
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", 5))
 SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", 10))
+# MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", 3))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 5))
+BATCH_DELAY_MIN = float(os.getenv("BATCH_DELAY_MIN", 3.0))
+BATCH_DELAY_MAX = float(os.getenv("BATCH_DELAY_MAX", 8.0))
+
+
+# MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
+# SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", 10))
 
 
 
@@ -42,13 +52,7 @@ SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", 10))
 # load_dotenv("config/.env")
 
 
-# # -----------------------------
-# # Scraper Settings
-# # -----------------------------
-# MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
-# SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", 10))
-# MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", 3))
-# BATCH_SIZE = int(os.getenv("BATCH_SIZE", 5))
+
 
 # # -----------------------------
 # # Queue Settings

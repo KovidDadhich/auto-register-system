@@ -113,7 +113,7 @@ class GCMSScraper:
                 "appellant": self.get_value(soup, "प्रार्थी"),
                 "respondent": self.get_value(soup, "अप्रार्थी"),
                 "hearing_date": self.get_value(soup, "सुनवाई/निर्णय दिनांक"),
-                "bench": self.get_value(soup, "बेंच"),
+                "bench": self.get_value(soup, "बेंच")
             }
 
             log_scrape_event(logger, case_id=case_id, task_type="fetch_case",
