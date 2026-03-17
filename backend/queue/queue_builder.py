@@ -5,7 +5,7 @@ Purpose: Creates scraping tasks for today.
 
 import sqlite3
 from datetime import date
-from config.settings import DB_PATH
+from config.settings import DB_PATH,MAX_RETRIES
 from backend.logger import get_logger, log_scrape_event
 
 logger = get_logger(__name__)
@@ -117,11 +117,14 @@ def _is_task_blocked(
     scheduled_date: str,
 ) -> bool:
     """
-    Returns True if a task already exists for this case+hearing+type+date
-    with status = 'pending' or 'processing'.
-    In that case we should NOT create a new task.
-    Returns False if no task exists, or last task was 'failed' or 'completed'
-    — in those cases we SHOULD create a new task.
+    Returns True (blocked — do NOT create task) if:
+      - status is 'pending' or 'processing' (already in progress), OR
+      - status is 'failed' AND retry_count >= MAX_RETRIES (exhausted)
+ 
+    Returns False (allowed — create new task) if:
+      - no task exists yet, OR
+      - last task was 'completed', OR
+      - last task was 'failed' but retries still remaining
     """
     cursor = conn.execute(
         """
@@ -141,10 +144,19 @@ def _is_task_blocked(
         return False  # no task exists → create one
 
     status = row["status"]
+    retry_count = row["retry_count"]
+
     if status in ("pending", "processing"):
         return True   # already in progress → skip
+    
+    if status == "failed" and retry_count >= MAX_RETRIES:
+        logger.warning(
+            f"Max retries reached | case_pk={case_pk} | "
+            f"task_type={task_type} | retry_count={retry_count}/{MAX_RETRIES}"
+        )
+        return True     # retries exhausted → skip
 
-    return False      # failed or completed → create a new one
+    return False      # failed with retries left, or completed → allow / create a new one
 
 
 def _insert_tasks_with_check(
@@ -167,7 +179,7 @@ def _insert_tasks_with_check(
         if blocked:
             logger.debug(
                 f"Skipped task | case_pk={row['case_pk']} | "
-                f"task_type={task_type} | status=pending/processing"
+                f"task_type={task_type} | status=pending/processing/max_retries"
             )
         else:
             tasks_to_insert.append({
@@ -177,6 +189,7 @@ def _insert_tasks_with_check(
                 "scheduled_date": scheduled_date,
                 "status"        : "pending",
                 "retry_count"   : 0,
+                "last_error"    : None,
             })
 
     if tasks_to_insert:
@@ -185,7 +198,7 @@ def _insert_tasks_with_check(
             INSERT INTO FetchQueue
                 (case_pk, hearing_id, task_type, scheduled_date, status, retry_count)
             VALUES
-                (:case_pk, :hearing_id, :task_type, :scheduled_date, :status, :retry_count)
+                (:case_pk, :hearing_id, :task_type, :scheduled_date, :status, :retry_count, :last_error)
             """,
             tasks_to_insert,
         )

@@ -13,14 +13,14 @@ def run_scraper():
 
 
 def main():
-    # create_DB()
+    create_DB()
 
-    # # insert-test-case
-    # insertTestCase()
+    # insert-test-case
+    insertTestCase()
 
-    print(f"Starting Register System for: {URL}")
-    # Call your scraper function
-    run_scraper()
+    # print(f"Starting Register System for: {URL}")
+    # # Call your scraper function
+    # run_scraper()
 
 if __name__ == "__main__":
     main()

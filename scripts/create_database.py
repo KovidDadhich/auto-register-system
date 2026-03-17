@@ -60,7 +60,9 @@ def create_DB():
         task_type TEXT,
         scheduled_date TEXT,
         status TEXT,
-        retry_count INTEGER DEFAULT 0
+        retry_count INTEGER DEFAULT 0,
+        last_error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
