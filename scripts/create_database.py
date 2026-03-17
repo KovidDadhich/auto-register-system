@@ -1,17 +1,17 @@
 import sqlite3
-from config.settings import DATABASE_PATH # Path in string data type
+from config.settings import DB_PATH # Path in string data type
 from pathlib import Path
 
 
 
 def create_DB():
     # database path - not string path
-    DB_PATH = Path(DATABASE_PATH)
+    DATABASE_PATH = Path(DB_PATH)
     # ensure database folder exists
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     # connect to database
-    conn = sqlite3.connect(DATABASE_PATH)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     # -------------------------

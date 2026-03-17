@@ -12,7 +12,7 @@ load_dotenv("config/.env")
 # -----------------------------
 # Project Paths
 # -----------------------------
-DATABASE_PATH = os.getenv("DB_PATH", "")
+DB_PATH = os.getenv("DB_PATH", "")
 LOG_FILE_PATH = os.getenv("LOG_FILE", "")
 
 

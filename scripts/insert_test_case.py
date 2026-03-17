@@ -1,9 +1,9 @@
 import sqlite3
-from config.settings import DATABASE_PATH
+from config.settings import DB_PATH
 
 
 def insertTestCase():    
-    conn = sqlite3.connect(DATABASE_PATH)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute("""
