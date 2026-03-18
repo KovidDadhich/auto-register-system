@@ -40,6 +40,7 @@ def create_DB():
         current_hearing_date TEXT,
         bench_fetch_at TEXT,
         next_date_fetch_at TEXT,
+        hearing_date_changed TEXT,
         bench_name TEXT,
         bench_number TEXT,
         bench_member TEXT,

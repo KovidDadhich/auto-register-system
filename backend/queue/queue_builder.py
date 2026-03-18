@@ -118,17 +118,39 @@ def _is_task_blocked(
 ) -> bool:
     """
     Returns True (blocked — do NOT create task) if:
+      - a completed task already exists for this hearing+type+date
+        (same-day retry already succeeded), OR
       - status is 'pending' or 'processing' (already in progress), OR
       - status is 'failed' AND retry_count >= MAX_RETRIES (exhausted)
  
     Returns False (allowed — create new task) if:
       - no task exists yet, OR
-      - last task was 'completed', OR
       - last task was 'failed' but retries still remaining
     """
+    # Check if any completed task exists for this hearing+type+date
+    completed = conn.execute(
+        """
+        SELECT 1 FROM FetchQueue
+        WHERE hearing_id     = ?
+          AND task_type      = ?
+          AND scheduled_date = ?
+          AND status         = 'completed'
+        LIMIT 1
+        """,
+        (hearing_id, task_type, scheduled_date),
+    ).fetchone()
+ 
+    if completed:
+        logger.debug(
+            f"Skipping | hearing_id={hearing_id} | task_type={task_type} | "
+            f"reason=already completed (same-day retry succeeded)"
+        )
+        return True                                   # already succeeded → skip
+
+    # Check latest task status
     cursor = conn.execute(
         """
-        SELECT status FROM FetchQueue
+        SELECT status, retry_count FROM FetchQueue
         WHERE case_pk      = ?
           AND hearing_id   = ?
           AND task_type    = ?
@@ -196,7 +218,7 @@ def _insert_tasks_with_check(
         conn.executemany(
             """
             INSERT INTO FetchQueue
-                (case_pk, hearing_id, task_type, scheduled_date, status, retry_count)
+                (case_pk, hearing_id, task_type, scheduled_date, status, retry_count, last_error)
             VALUES
                 (:case_pk, :hearing_id, :task_type, :scheduled_date, :status, :retry_count, :last_error)
             """,

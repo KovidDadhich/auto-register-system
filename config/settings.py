@@ -33,11 +33,18 @@ BATCH_DELAY_MIN = float(os.getenv("BATCH_DELAY_MIN", 3.0))
 BATCH_DELAY_MAX = float(os.getenv("BATCH_DELAY_MAX", 8.0))
 
 
-# MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
-# SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", 10))
+# -----------------------------
+# Scheduler Settings
+# -----------------------------
+MAIN_RUN_TIME  = os.getenv("MAIN_RUN_TIME",  "08:00")
+RETRY_RUN_TIME = os.getenv("RETRY_RUN_TIME", "11:00")
 
 
-
+# -----------------------------
+# Mapper
+# -----------------------------
+BASE_DIR = os.getenv("BASE_DIR", "auto-register-system")
+MAPPING_FILE = os.path.join(BASE_DIR, "config", "bench_mapping.json")
 
 
 
