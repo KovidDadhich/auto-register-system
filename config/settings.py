@@ -44,7 +44,7 @@ RETRY_RUN_TIME = os.getenv("RETRY_RUN_TIME", "11:00")
 # Mapper
 # -----------------------------
 BASE_DIR = os.getenv("BASE_DIR", "auto-register-system")
-MAPPING_FILE = os.path.join(BASE_DIR, "config", "bench_mapping.json")
+MAPPING_FILE = os.path.join("config", "bench_mapping.json")
 
 
 

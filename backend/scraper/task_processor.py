@@ -367,7 +367,7 @@ def _load_queued_tasks(task_type: str) -> list:
                 c.case_id
             FROM FetchQueue fq
             JOIN Cases c ON fq.case_pk = c.case_pk
-            WHERE fq.status    = 'queued'
+            WHERE fq.status    = 'pending'
               AND fq.task_type = ?
             ORDER BY fq.task_id ASC
             """,
