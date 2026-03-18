@@ -64,7 +64,6 @@ def create_DB():
         status TEXT,
         retry_count INTEGER DEFAULT 0,
         last_error TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
