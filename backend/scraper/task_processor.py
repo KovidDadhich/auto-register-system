@@ -2,12 +2,10 @@ import asyncio
 import aiohttp
 import random
 import re
-import sqlite3
 from datetime import date
 from bs4 import BeautifulSoup
 
 from config.settings import (
-    DB_PATH,
     URL,
     MAX_RETRIES,
     SCRAPER_TIMEOUT,
@@ -17,7 +15,6 @@ from config.settings import (
 )
 from backend.logger import get_logger, log_scrape_event
 from backend.mapper.hindi_mapper import map_parsed_data
-
 from backend.db.db_writer import (
     write_next_date,
     write_bench_details,
@@ -26,9 +23,6 @@ from backend.db.db_writer import (
     mark_task_failed,
     get_conn,
 )
-
-
-
 
 logger = get_logger(__name__)
 
@@ -127,33 +121,31 @@ async def _handle_task(task: sqlite3.Row, task_type: str, semaphore: asyncio.Sem
     retry_count = task["retry_count"]
 
     async with semaphore:
-        _mark_task_status(task_id, "processing")
+        mark_task_processing(task_id)
 
         try:
             async with aiohttp.ClientSession() as session:
-                # Each worker initializes its own session (viewstate + CSRF)
                 viewstate, generator, csrf = await _initialize_session(session)
-
-                # Scrape GCMS
                 raw_html = await _scrape_gcms(
                     session, case_id, viewstate, generator, csrf
                 )
 
-            # Parse raw HTML
             parsed = _parse_response(raw_html, task_type, case_id)
 
             if parsed is None:
                 raise ValueError("Parsing returned None — required fields missing in HTML.")
-            
+
             # Map Hindi → English (bench_name only, others pass through)
             if task_type == "fetch_bench":
                 parsed = map_parsed_data(parsed)
 
-            # Write result to Hearings table
-            _write_to_db(hearing_id, task_type, parsed, case_pk=case_pk)
+            # Write to DB via db_writer
+            if task_type == "fetch_next_date":
+                write_next_date(hearing_id, case_pk, parsed["next_hearing_date"])
+            elif task_type == "fetch_bench":
+                write_bench_details(hearing_id, case_pk, parsed)
 
-            # Mark task as completed
-            _mark_task_status(task_id, "completed")
+            mark_task_complete(task_id)
 
             log_scrape_event(
                 logger,
@@ -163,11 +155,9 @@ async def _handle_task(task: sqlite3.Row, task_type: str, semaphore: asyncio.Sem
             )
 
         except Exception as e:
-            error_msg = str(e)
-
-            # Increment retry_count and store last_error
+            error_msg       = str(e)
             new_retry_count = retry_count + 1
-            _mark_task_failed(task_id, error_msg, new_retry_count)
+            mark_task_failed(task_id, error_msg, new_retry_count)
 
             result_label = "retry" if new_retry_count < MAX_RETRIES else "failed"
             log_scrape_event(
@@ -364,7 +354,7 @@ def _load_queued_tasks(task_type: str) -> list:
     Loads all tasks from FetchQueue with status='queued' for the given task_type.
     Joins with Cases to get case_id.
     """
-    conn = _get_conn()
+    conn = get_conn()
     try:
         cursor = conn.execute(
             """
@@ -376,7 +366,7 @@ def _load_queued_tasks(task_type: str) -> list:
                 c.case_id
             FROM FetchQueue fq
             JOIN Cases c ON fq.case_pk = c.case_pk
-            WHERE fq.status    = 'pending'
+            WHERE fq.status    = 'queued'
               AND fq.task_type = ?
             ORDER BY fq.task_id ASC
             """,
@@ -387,181 +377,6 @@ def _load_queued_tasks(task_type: str) -> list:
         return rows
     finally:
         conn.close()
-
-
-def _write_to_db(hearing_id: int, task_type: str, parsed: dict, case_pk: int = None):
-    """
-    Updates the Hearings row with scraped data.
-
-    fetch_next_date → updates next_hearing_date only.
-
-    fetch_bench     → fetches current_hearing_date from DB and compares
-                      with fetched_hearing_date from GCMS.
-                      If same  → normal update (bench details only).
-                      If changed → mark old record, insert new corrected record.
-    """
-    conn = _get_conn()
-    try:
-        if task_type == "fetch_next_date":
-            conn.execute(
-                """
-                UPDATE Hearings
-                SET next_hearing_date = ?
-                WHERE hearing_id = ?
-                """,
-                (parsed["next_hearing_date"], hearing_id),
-            )
-            conn.commit()
-            logger.debug(f"DB updated | hearing_id={hearing_id} | task_type=fetch_next_date")
-
-        elif task_type == "fetch_bench":
-            # Load existing record
-            existing = conn.execute(
-                """
-                SELECT current_hearing_date, prev_hearing_date
-                FROM Hearings
-                WHERE hearing_id = ?
-                """,
-                (hearing_id,),
-            ).fetchone()
-
-            stored_date  = existing["current_hearing_date"]
-            fetched_date = parsed["fetched_hearing_date"]
-
-            if stored_date == fetched_date:
-                # ── Normal case: date unchanged ───────────────────────────────
-                conn.execute(
-                    """
-                    UPDATE Hearings
-                    SET bench_name   = ?,
-                        bench_number = ?,
-                        bench_member = ?,
-                        status       = ?
-                    WHERE hearing_id = ?
-                    """,
-                    (
-                        parsed["bench_name"],
-                        parsed["bench_number"],
-                        parsed["bench_member"],
-                        parsed["status"],
-                        hearing_id,
-                    ),
-                )
-                logger.debug(f"DB updated | hearing_id={hearing_id} | date unchanged")
-
-            else:
-                # ── Date changed: mark old record, insert new one ─────────────
-                logger.warning(
-                    f"Hearing date changed | hearing_id={hearing_id} | "
-                    f"stored={stored_date} | fetched={fetched_date}"
-                )
-
-                # Step 1: Update old record — fill bench details, mark changed,
-                #         clear scheduling columns
-                conn.execute(
-                    """
-                    UPDATE Hearings
-                    SET bench_name            = ?,
-                        bench_number          = ?,
-                        bench_member          = ?,
-                        status                = ?,
-                        next_hearing_date     = NULL,
-                        next_date_fetch_at    = NULL,
-                        hearing_date_changed  = 'date_changed'
-                    WHERE hearing_id = ?
-                    """,
-                    (
-                        parsed["bench_name"],
-                        parsed["bench_number"],
-                        parsed["bench_member"],
-                        parsed["status"],
-                        hearing_id,
-                    ),
-                )
-
-                # Step 2: Compute new scheduling dates
-                from datetime import date as _date, timedelta
-                new_current   = fetched_date   # string from GCMS e.g. "15/01/2026"
-                # Parse fetched date (GCMS returns DD/MM/YYYY)
-                new_current_dt = _date(
-                    int(new_current.split("/")[2]),
-                    int(new_current.split("/")[1]),
-                    int(new_current.split("/")[0]),
-                )
-                new_bench_fetch_at    = (new_current_dt - timedelta(days=1)).isoformat()
-                new_next_date_fetch_at = (new_current_dt + timedelta(days=2)).isoformat()
-
-                # Step 3: Insert new corrected record
-                conn.execute(
-                    """
-                    INSERT INTO Hearings (
-                        case_pk,
-                        prev_hearing_date,
-                        current_hearing_date,
-                        bench_fetch_at,
-                        next_date_fetch_at
-                    ) VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        case_pk,
-                        existing["prev_hearing_date"],   # carry forward — old current never happened
-                        new_current_dt.isoformat(),
-                        new_bench_fetch_at,
-                        new_next_date_fetch_at,
-                    ),
-                )
-                logger.info(
-                    f"New hearing record inserted | case_pk={case_pk} | "
-                    f"new_current={new_current_dt.isoformat()}"
-                )
-
-            conn.commit()
-
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"DB write failed | hearing_id={hearing_id} | error={e}")
-        raise
-    finally:
-        conn.close()
-
-
-def _mark_task_status(task_id: int, status: str):
-    """Updates FetchQueue status for a task."""
-    conn = _get_conn()
-    try:
-        conn.execute(
-            "UPDATE FetchQueue SET status = ? WHERE task_id = ?",
-            (status, task_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _mark_task_failed(task_id: int, error_msg: str, new_retry_count: int):
-    """Marks a task as failed, stores last_error and increments retry_count."""
-    conn = _get_conn()
-    try:
-        conn.execute(
-            """
-            UPDATE FetchQueue
-            SET status      = 'failed',
-                retry_count = ?,
-                last_error  = ?
-            WHERE task_id = ?
-            """,
-            (new_retry_count, error_msg, task_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
 
 
 # ══════════════════════════════════════════════════════════════════════════════
