@@ -23,6 +23,7 @@ from backend.db.db_writer import (
     mark_task_processing,
     mark_task_failed,
     get_conn,
+    _parse_gcms_date,
 )
 
 logger = get_logger(__name__)
@@ -288,13 +289,14 @@ def _parse_response(html: str, task_type: str, case_id: str) -> dict | None:
         if not next_date:
             logger.warning(f"case_id={case_id} | next_hearing_date not found in HTML.")
             return None
-        return {"next_hearing_date": next_date}
+        return {"next_hearing_date": _parse_gcms_date(next_date).isoformat}
 
     elif task_type == "fetch_bench":
         bench_raw            = _get_value(soup, "बेंच")
         bench_member         = _get_value(soup, "सदस्य विवरण")
         status               = _get_value(soup, "प्रकरण की स्तिथि")
-        fetched_hearing_date = _get_value(soup, "सुनवाई/निर्णय दिनांक")  # for date-change check
+        fetched_hearing_date_raw = _get_value(soup, "सुनवाई/निर्णय दिनांक")  # for date-change check
+        fetched_hearing_date = _parse_gcms_date(fetched_hearing_date_raw).isoformat if fetched_hearing_date_raw else None
 
         if not bench_raw:
             logger.warning(f"case_id={case_id} | bench not found in HTML.")
