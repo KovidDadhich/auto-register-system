@@ -289,7 +289,7 @@ def _parse_response(html: str, task_type: str, case_id: str) -> dict | None:
         if not next_date:
             logger.warning(f"case_id={case_id} | next_hearing_date not found in HTML.")
             return None
-        return {"next_hearing_date": _parse_gcms_date(next_date).isoformat()}
+        return {"next_hearing_date": next_date}
 
     elif task_type == "fetch_bench":
         bench_raw            = _get_value(soup, "बेंच")
