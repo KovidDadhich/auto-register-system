@@ -24,6 +24,8 @@ from backend.db.db_writer import (
     mark_task_failed,
     get_conn,
     _parse_gcms_date,
+    reschedule_next_date_fetch,
+    get_current_hearing_date,
 )
 
 logger = get_logger(__name__)
@@ -112,8 +114,8 @@ async def _handle_task(task: sqlite3.Row, task_type: str, semaphore: asyncio.Sem
     1. Acquires semaphore slot
     2. Initializes its own aiohttp session
     3. Scrapes GCMS
-    4. Parses + maps result
-    5. Writes to DB
+    4. Parses + validates result
+    5. Writes to DB or reschedules if date not updated yet
     6. Updates FetchQueue status
     """
     task_id    = task["task_id"]
@@ -126,16 +128,36 @@ async def _handle_task(task: sqlite3.Row, task_type: str, semaphore: asyncio.Sem
         mark_task_processing(task_id)
 
         try:
+
+            # Fetch current_hearing_date from DB for date validation
+            current_hearing_date = get_current_hearing_date(hearing_id)
+
             async with aiohttp.ClientSession() as session:
                 viewstate, generator, csrf = await _initialize_session(session)
                 raw_html = await _scrape_gcms(
                     session, case_id, viewstate, generator, csrf
                 )
 
-            parsed = _parse_response(raw_html, task_type, case_id)
+            parsed = _parse_response(raw_html, task_type, case_id, current_hearing_date)
 
             if parsed is None:
                 raise ValueError("Parsing returned None — required fields missing in HTML.")
+
+            # ── fetch_next_date: check if date was actually updated on GCMS ──
+            if task_type == "fetch_next_date" and parsed.get("date_not_updated"):
+                new_retry_count = retry_count + 1
+                # Reschedule next_date_fetch_at = today + 2
+                reschedule_next_date_fetch(hearing_id)
+                mark_task_failed(task_id, "date_not_updated", new_retry_count)
+                result_label = "retry" if new_retry_count < MAX_RETRIES else "failed"
+                log_scrape_event(
+                    logger,
+                    case_id       = case_id,
+                    task_type     = task_type,
+                    result        = result_label,
+                    error_message = "date_not_updated — GCMS still shows old/empty date",
+                )
+                return  # exit early, do not write to DB
 
             # Map Hindi → English (bench_name only, others pass through)
             if task_type == "fetch_bench":
@@ -271,25 +293,49 @@ async def _scrape_gcms(
 # HTML PARSING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _parse_response(html: str, task_type: str, case_id: str) -> dict | None:
+def _parse_response(html: str, task_type: str, case_id: str, current_hearing_date: str = None) -> dict | None:
     """
     Parses the UpdatePanel HTML and extracts fields based on task_type.
-
-    fetch_next_date  → { next_hearing_date }
+ 
+    fetch_next_date  → {
+                         next_hearing_date,       (YYYY-MM-DD)
+                         date_not_updated: bool   (True if date is empty/same/older)
+                       }
     fetch_bench      → { bench_name, bench_number, bench_member, status,
-                         fetched_hearing_date }
-                       (fetched_hearing_date always included for date-change check)
-
-    Returns None if required fields are missing.
+                         fetched_hearing_date }   (YYYY-MM-DD)
+ 
+    Returns None if required fields are completely missing (HTML parse failure).
     """
     soup = BeautifulSoup(html, "html.parser")
 
     if task_type == "fetch_next_date":
-        next_date = _get_value(soup, "सुनवाई/निर्णय दिनांक")
-        if not next_date:
+        next_date_raw = _get_value(soup, "सुनवाई/निर्णय दिनांक")
+
+        # ── Empty → not updated yet ───────────────────────────────────────────
+        if not next_date_raw:
+            logger.warning(f"case_id={case_id} | सुनवाई/निर्णय दिनांक is empty on GCMS.")
+            return {"next_hearing_date": None, "date_not_updated": True}
+
+        # ── Convert to YYYY-MM-DD ─────────────────────────────────────────────
+        try:
+            next_date = _parse_gcms_date(next_date_raw).isoformat()
+        except ValueError:
+            logger.warning(f"case_id={case_id} | Could not parse date: '{next_date_raw}'")
+            return {"next_hearing_date": None, "date_not_updated": True}
+        
+        # ── Same or older than current_hearing_date → not updated yet ─────────
+        if current_hearing_date and next_date <= current_hearing_date:
+            logger.warning(
+                f"case_id={case_id} | Date not updated | "
+                f"fetched={next_date} | current={current_hearing_date}"
+            )
+            return {"next_hearing_date": None, "date_not_updated": True}
+        
+        # ── Valid new date ─────────────────────────────────────────────────────
+        if not next_date_raw:
             logger.warning(f"case_id={case_id} | next_hearing_date not found in HTML.")
             return None
-        return {"next_hearing_date": next_date}
+        return {"next_hearing_date": next_date_raw, "date_not_updated": False}
 
     elif task_type == "fetch_bench":
         bench_raw            = _get_value(soup, "बेंच")
@@ -315,7 +361,6 @@ def _parse_response(html: str, task_type: str, case_id: str) -> dict | None:
     else:
         logger.error(f"Unknown task_type: {task_type}")
         return None
-
 
 def _split_bench(bench_raw: str) -> tuple:
     """

@@ -303,3 +303,47 @@ def _parse_gcms_date(date_str: str) -> _date:
         return _date(int(year), int(month), int(day))
     except Exception:
         raise ValueError(f"Could not parse GCMS date: '{date_str}' — expected DD/MM/YYYY")
+
+
+def reschedule_next_date_fetch(hearing_id: int):
+    """
+    Called when GCMS date is not updated yet (empty or same as current).
+    Pushes next_date_fetch_at forward by 2 days from today,
+    so the queue builder picks it up again the day after tomorrow.
+    Does NOT create a new Hearings record.
+    """
+    new_fetch_date = (_date.today() + timedelta(days=2)).isoformat()
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE Hearings SET next_date_fetch_at = ? WHERE hearing_id = ?",
+            (new_fetch_date, hearing_id),
+        )
+        conn.commit()
+        logger.info(
+            f"Rescheduled next_date_fetch_at | hearing_id={hearing_id} | "
+            f"new_date={new_fetch_date}"
+        )
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"reschedule_next_date_fetch failed | hearing_id={hearing_id} | error={e}")
+        raise
+    finally:
+        conn.close()
+ 
+ 
+def get_current_hearing_date(hearing_id: int) -> str | None:
+    """
+    Returns the current_hearing_date for a given hearing_id as a string (YYYY-MM-DD).
+    Used by task_processor to validate fetched dates against stored dates.
+    """
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT current_hearing_date FROM Hearings WHERE hearing_id = ?",
+            (hearing_id,),
+        ).fetchone()
+        return row["current_hearing_date"] if row else None
+    finally:
+        conn.close()
+ 
