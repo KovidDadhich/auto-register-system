@@ -16,6 +16,7 @@ from backend.scraper.task_processor import (
     run_fetch_next_hearing_date,
     run_fetch_bench_details,
 )
+from catchUpScanner import run_catchup_scanner
 # Placeholder — will be implemented in Sheets Sync step
 # from backend.sheets.sheets_syncer import run_sheets_sync
 
@@ -38,6 +39,18 @@ def run_main_pipeline():
     logger.info("=" * 60)
     logger.info("MAIN PIPELINE STARTED")
     logger.info("=" * 60)
+
+    # ── Step 0: Catch-up Scanner ──────────────────────────────────────────────
+    logger.info("Step 0/3 | Catch-up Scanner starting...")
+    try:
+        run_catchup_scanner()
+        logger.info("Step 0/3 | Catch-up Scanner complete.")
+    except Exception as e:
+        logger.error(f"Step 0/3 | Catch-up Scanner FAILED: {e}")
+        logger.error("Main pipeline stopped.")
+        return
+
+
 
     # ── Step 1: Queue Builder ─────────────────────────────────────────────────
     logger.info("Step 1/3 | Queue Builder starting...")

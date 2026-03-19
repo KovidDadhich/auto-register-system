@@ -47,6 +47,14 @@ BASE_DIR = os.getenv("BASE_DIR", "auto-register-system")
 MAPPING_FILE = os.path.join("config", "bench_mapping.json")
 
 
+# ------------------------------
+# CatchUp Scanner
+# ------------------------------
+NEXT_DATE_GRACE_DAYS = int(os.getenv("NEXT_DATE_GRACE_DAYS", 4))
+BENCH_CUTOFF_HOUR    = int(os.getenv("BENCH_CUTOFF_HOUR", 19))
+DATE_CUTOFF_HOUR    = int(os.getenv("DATE_CUTOFF_HOUR", 19))
+
+
 
 
 # from dotenv import load_dotenv

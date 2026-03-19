@@ -22,14 +22,20 @@ def get_conn() -> sqlite3.Connection:
 # NEXT DATE WRITER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def write_next_date(hearing_id: int, case_pk: int, next_hearing_date_raw: str):
+def write_next_date(
+    hearing_id            : int,
+    case_pk               : int,
+    next_hearing_date_raw : str,
+    late_fetch            : bool = False,
+):
     """
     Called after a successful fetch_next_date scrape.
 
     Steps:
-    1. Update existing Hearings record → set next_hearing_date
-    2. Parse next_hearing_date (DD/MM/YYYY from GCMS → YYYY-MM-DD for DB)
-    3. Create new Hearings record for the next cycle:
+    1. Update existing Hearings record → set next_hearing_date, next_date_fetched=1
+    2. If late_fetch=True → set system_note (Case 2.2 from catch-up scanner)
+    3. Parse next_hearing_date (DD/MM/YYYY from GCMS → YYYY-MM-DD for DB)
+    4. Create new Hearings record for the next cycle:
          - prev_hearing_date  = existing record's current_hearing_date
          - current_hearing_date = next_hearing_date (just fetched)
          - bench_fetch_at     = current_hearing_date - 1
@@ -49,12 +55,28 @@ def write_next_date(hearing_id: int, case_pk: int, next_hearing_date_raw: str):
         # ── Step 3: parse next_hearing_date → YYYY-MM-DD ─────────────────────  ===============> moved upwards so as to write date as isoformat in next_hearing_date of existing record (earlier it was 03/12/2026, now 2026-12-03 in next_hearing_date also)
         new_current_dt = _parse_gcms_date(next_hearing_date_raw)
 
-        # ── Step 2: update next_hearing_date on existing record ───────────────
-        conn.execute(
-            "UPDATE Hearings SET next_hearing_date = ? WHERE hearing_id = ?",
-            (new_current_dt, hearing_id),
+        # ── Step 2: update next_hearing_date + next_date_fetched on existing record ───────────────
+        system_note = (
+            "Next hearing date fetched late — possible missed hearing due to system shutdown."
+            if late_fetch else None
         )
-        logger.debug(f"Updated next_hearing_date | hearing_id={hearing_id} | value={new_current_dt}")
+        conn.execute(
+            """
+            UPDATE Hearings
+            SET next_hearing_date  = ?,
+                next_date_fetched  = 1,
+                system_note        = CASE
+                                        WHEN ? IS NOT NULL THEN ?
+                                        ELSE system_note
+                                     END
+            WHERE hearing_id = ?
+            """,
+            (new_current_dt, system_note, system_note, hearing_id),
+        )
+        logger.debug(
+            f"Updated next_hearing_date | hearing_id={hearing_id} | "
+            f"value={next_hearing_date_raw} | late_fetch={late_fetch}"
+        )
 
         # ── Step 4: compute scheduling dates ──────────────────────────────────
         bench_fetch_at     = (new_current_dt - timedelta(days=1)).isoformat()
@@ -142,7 +164,8 @@ def write_bench_details(hearing_id: int, case_pk: int, parsed: dict):
                 SET bench_name   = ?,
                     bench_number = ?,
                     bench_member = ?,
-                    status       = ?
+                    status       = ?,
+                    bench_fetched = 1
                 WHERE hearing_id = ?
                 """,
                 (
@@ -174,7 +197,8 @@ def write_bench_details(hearing_id: int, case_pk: int, parsed: dict):
                     status               = ?,
                     next_hearing_date    = NULL,
                     next_date_fetch_at   = NULL,
-                    hearing_date_changed = 'date_changed'
+                    hearing_date_changed = 'date_changed',
+                    bench_fetched        = 1
                 WHERE hearing_id = ?
                 """,
                 (
@@ -242,11 +266,20 @@ def mark_task_processing(task_id: int):
     logger.debug(f"Task marked processing | task_id={task_id}")
 
 
-def mark_task_failed(task_id: int, error_msg: str, new_retry_count: int):
+def mark_task_failed(
+    task_id         : int,
+    error_msg       : str,
+    new_retry_count : int,
+    hearing_id      : int  = None,
+    task_type       : str  = None,
+):
     """
     Marks a FetchQueue task as failed.
     Stores last_error and updated retry_count.
+    If retry_count >= MAX_RETRIES, also sets bench_fetched or next_date_fetched = 1
+    on the Hearings record so catch-up scanner never retries it again.
     """
+    from config.settings import MAX_RETRIES
     conn = get_conn()
     try:
         conn.execute(
@@ -259,6 +292,26 @@ def mark_task_failed(task_id: int, error_msg: str, new_retry_count: int):
             """,
             (new_retry_count, error_msg, task_id),
         )
+
+        # If retries exhausted, mark hearing as permanently done for this task
+        if new_retry_count >= MAX_RETRIES and hearing_id and task_type:
+            if task_type == "fetch_bench":
+                conn.execute(
+                    "UPDATE Hearings SET bench_fetched = 1 WHERE hearing_id = ?",
+                    (hearing_id,),
+                )
+                logger.warning(
+                    f"MAX_RETRIES reached | bench_fetched=1 set | hearing_id={hearing_id}"
+                )
+            elif task_type == "fetch_next_date":
+                conn.execute(
+                    "UPDATE Hearings SET next_date_fetched = 1 WHERE hearing_id = ?",
+                    (hearing_id,),
+                )
+                logger.warning(
+                    f"MAX_RETRIES reached | next_date_fetched=1 set | hearing_id={hearing_id}"
+                )
+
         conn.commit()
         logger.debug(
             f"Task marked failed | task_id={task_id} | "

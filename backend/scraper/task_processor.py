@@ -123,6 +123,7 @@ async def _handle_task(task: sqlite3.Row, task_type: str, semaphore: asyncio.Sem
     hearing_id = task["hearing_id"]
     case_id    = task["case_id"]
     retry_count = task["retry_count"]
+    late_fetch  = task["last_error"] == "late_fetch"   # set by catch-up scanner for Case 2.2
 
     async with semaphore:
         mark_task_processing(task_id)
@@ -144,7 +145,8 @@ async def _handle_task(task: sqlite3.Row, task_type: str, semaphore: asyncio.Sem
                 raise ValueError("Parsing returned None — required fields missing in HTML.")
 
             # ── fetch_next_date: check if date was actually updated on GCMS ──
-            if task_type == "fetch_next_date" and parsed.get("date_not_updated"):
+            # Skip this check for late_fetch (Case 2.2) — write whatever is on GCMS
+            if task_type == "fetch_next_date" and parsed.get("date_not_updated") and not late_fetch:
                 new_retry_count = retry_count + 1
                 # Reschedule next_date_fetch_at = today + 2
                 reschedule_next_date_fetch(hearing_id)
@@ -165,7 +167,11 @@ async def _handle_task(task: sqlite3.Row, task_type: str, semaphore: asyncio.Sem
 
             # Write to DB via db_writer
             if task_type == "fetch_next_date":
-                write_next_date(hearing_id, case_pk, parsed["next_hearing_date"])
+                write_next_date(
+                    hearing_id, case_pk,
+                    parsed["next_hearing_date"],
+                    late_fetch=late_fetch,    # passes Case 2.2 flag to set system_note
+                )
             elif task_type == "fetch_bench":
                 write_bench_details(hearing_id, case_pk, parsed)
 
@@ -181,7 +187,10 @@ async def _handle_task(task: sqlite3.Row, task_type: str, semaphore: asyncio.Sem
         except Exception as e:
             error_msg       = str(e)
             new_retry_count = retry_count + 1
-            mark_task_failed(task_id, error_msg, new_retry_count)
+            mark_task_failed(
+                task_id, error_msg, new_retry_count,
+                hearing_id=hearing_id, task_type=task_type
+            )
 
             result_label = "retry" if new_retry_count < MAX_RETRIES else "failed"
             log_scrape_event(
@@ -401,6 +410,7 @@ def _load_queued_tasks(task_type: str) -> list:
     """
     Loads all tasks from FetchQueue with status='queued' for the given task_type.
     Joins with Cases to get case_id.
+    Also fetches last_error to detect late_fetch tasks created by catch-up scanner.
     """
     conn = get_conn()
     try:
@@ -411,6 +421,7 @@ def _load_queued_tasks(task_type: str) -> list:
                 fq.case_pk,
                 fq.hearing_id,
                 fq.retry_count,
+                fq.last_error,
                 c.case_id
             FROM FetchQueue fq
             JOIN Cases c ON fq.case_pk = c.case_pk
