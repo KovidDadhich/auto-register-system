@@ -46,15 +46,15 @@ def write_next_date(hearing_id: int, case_pk: int, next_hearing_date_raw: str):
         if existing is None:
             raise ValueError(f"Hearing record not found for hearing_id={hearing_id}")
 
+        # ── Step 3: parse next_hearing_date → YYYY-MM-DD ─────────────────────  ===============> moved upwards so as to write date as isoformat in next_hearing_date of existing record (earlier it was 03/12/2026, now 2026-12-03 in next_hearing_date also)
+        new_current_dt = _parse_gcms_date(next_hearing_date_raw)
+
         # ── Step 2: update next_hearing_date on existing record ───────────────
         conn.execute(
             "UPDATE Hearings SET next_hearing_date = ? WHERE hearing_id = ?",
-            (next_hearing_date_raw, hearing_id),
+            (new_current_dt, hearing_id),
         )
-        logger.debug(f"Updated next_hearing_date | hearing_id={hearing_id} | value={next_hearing_date_raw}")
-
-        # ── Step 3: parse next_hearing_date → YYYY-MM-DD ─────────────────────
-        new_current_dt = _parse_gcms_date(next_hearing_date_raw)
+        logger.debug(f"Updated next_hearing_date | hearing_id={hearing_id} | value={new_current_dt}")
 
         # ── Step 4: compute scheduling dates ──────────────────────────────────
         bench_fetch_at     = (new_current_dt - timedelta(days=1)).isoformat()
