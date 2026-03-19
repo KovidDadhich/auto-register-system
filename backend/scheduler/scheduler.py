@@ -3,6 +3,16 @@ Purpose: Daily scheduler for the register system pipeline.
 Runs two jobs daily at configurable times:
   1. Main pipeline  (Queue Builder → Task Processor → Sheets Sync)
   2. Retry pipeline (Retry Handler → Task Processor)
+
+  
+
+
+Pipeline functions and blocking scheduler for the Register System.
+ 
+- run_main_pipeline()  → called by main.py --main or by scheduler
+- run_retry_pipeline() → called by main.py --retry or by scheduler
+- start_scheduler()    → called by main.py --scheduler (server mode, runs 24/7)
+
 '''
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -16,7 +26,7 @@ from backend.scraper.task_processor import (
     run_fetch_next_hearing_date,
     run_fetch_bench_details,
 )
-from catchUpScanner import run_catchup_scanner
+from backend.catchUp.catchUpScanner import run_catchup_scanner
 # Placeholder — will be implemented in Sheets Sync step
 # from backend.sheets.sheets_syncer import run_sheets_sync
 
@@ -29,9 +39,10 @@ logger = get_logger(__name__)
 
 def run_main_pipeline():
     """
-    Main daily pipeline. Runs at MAIN_RUN_TIME.
-
+    Main daily pipeline.
+ 
     Steps:
+    0. Catch-up Scanner  → handles missed tasks from any system shutdown
     1. Queue Builder     → creates today's fetch tasks
     2. Task Processor    → scrapes GCMS, writes to DB via db_writer
     3. Sheets Sync       → pushes DB data to Google Sheets (placeholder)
@@ -90,10 +101,10 @@ def run_main_pipeline():
 
 def run_retry_pipeline():
     """
-    Retry pipeline. Runs at RETRY_RUN_TIME (a few hours after main pipeline).
+    Retry pipeline. Runs after main pipeline (next day at RETRY_RUN_TIME).
 
     Steps:
-    1. Retry Handler  → re-queues failed tasks from today
+    1. Retry Handler  → re-queues failed tasks from previous main run
     2. Task Processor → scrapes GCMS for re-queued tasks, writes to DB
     """
     logger.info("=" * 60)
@@ -140,7 +151,7 @@ def _sheets_sync_placeholder():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCHEDULER SETUP
+# BLOCKING SCHEDULER (server mode)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _parse_time(time_str: str) -> tuple:
@@ -157,8 +168,11 @@ def _parse_time(time_str: str) -> tuple:
 
 def start_scheduler():
     """
-    Initializes and starts the APScheduler blocking scheduler.
-    Runs until the process is killed (e.g. Ctrl+C or Windows Task Scheduler stops it).
+    Starts the blocking APScheduler for server mode.
+    Runs indefinitely — call via python main.py --scheduler.
+ 
+    Catch-up scanner is embedded inside run_main_pipeline() so it
+    runs automatically on each scheduled main pipeline execution.
     """
     main_hour,  main_minute  = _parse_time(MAIN_RUN_TIME)
     retry_hour, retry_minute = _parse_time(RETRY_RUN_TIME)
@@ -201,8 +215,11 @@ def start_scheduler():
 
     scheduler.add_listener(_on_job_event, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
 
-    logger.info(f"Scheduler started | main_pipeline={MAIN_RUN_TIME} | retry_pipeline={RETRY_RUN_TIME}")
-    logger.info("Waiting for scheduled times. Press Ctrl+C to stop.")
+    logger.info(
+        f"Blocking scheduler started | "
+        f"main_pipeline={MAIN_RUN_TIME} | retry_pipeline={RETRY_RUN_TIME}"
+    )
+    logger.info("Press Ctrl+C to stop.")
 
     try:
         scheduler.start()
@@ -211,11 +228,3 @@ def start_scheduler():
     except Exception as e:
         logger.error(f"Scheduler crashed: {e}")
         raise
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    start_scheduler()
