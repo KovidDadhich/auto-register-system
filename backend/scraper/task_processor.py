@@ -296,7 +296,7 @@ def _parse_response(html: str, task_type: str, case_id: str) -> dict | None:
         bench_member         = _get_value(soup, "सदस्य विवरण")
         status               = _get_value(soup, "प्रकरण की स्तिथि")
         fetched_hearing_date_raw = _get_value(soup, "सुनवाई/निर्णय दिनांक")  # for date-change check
-        fetched_hearing_date = _parse_gcms_date(fetched_hearing_date_raw).isoformat if fetched_hearing_date_raw else None
+        fetched_hearing_date = _parse_gcms_date(fetched_hearing_date_raw).isoformat() # for date-change check
 
         if not bench_raw:
             logger.warning(f"case_id={case_id} | bench not found in HTML.")
