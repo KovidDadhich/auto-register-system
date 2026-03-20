@@ -6,3 +6,5 @@ database/register.db
 .env
 logger_code.py
 config/service_account.json
+.vscode
+
