@@ -41,13 +41,13 @@ COL_WRITE_CHUNK   = 200    # columns per row write chunk
 CELL_WRITE_CHUNK  = 500    # cells per update_cells call
 
 DAY_COLORS = {
-    "Monday":    {"dark": "#fce5cd", "light": "#fff2cc"}, # Orange
-    "Tuesday":   {"dark": "#d9ead3", "light": "#f1f8e9"}, # Green
-    "Wednesday": {"dark": "#cfe2f3", "light": "#e8f0fe"}, # Cornflower
-    "Thursday":  {"dark": "#d9d2e9", "light": "#f3e5f5"}, # Purple
-    "Friday":    {"dark": "#fff2cc", "light": "#fffde7"}, # Yellow
-    "Saturday":  {"dark": "#d0e0e3", "light": "#e0f7fa"}, # Cyan
-    "Sunday":    {"dark": "#ead1dc", "light": "#fce4ec"}, # Magenta
+    "Monday":    {"dark": "#ffb565", "light": "#ffd39d"}, # Orange
+    "Tuesday":   {"dark": "#72c753", "light": "#d1f6a7"}, # Green
+    "Wednesday": {"dark": "#5cb3ff", "light": "#b3daff"}, # Cornflower
+    "Thursday":  {"dark": "#a37cff", "light": "#debaff"}, # Purple
+    "Friday":    {"dark": "#ffd045", "light": "#fff4ad"}, # Yellow
+    "Saturday":  {"dark": "#40dcf8", "light": "#c1f8ff"}, # Cyan
+    "Sunday":    {"dark": "#da5891", "light": "#ffc9db"}, # Magenta
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
