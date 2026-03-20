@@ -33,7 +33,7 @@ BATCH_DELAY_MIN = float(os.getenv("BATCH_DELAY_MIN", 3.0))
 BATCH_DELAY_MAX = float(os.getenv("BATCH_DELAY_MAX", 8.0))
 
 
-# -----------------------------
+# ------------------------------> THIS ROLE NOW DONE BY WINDOWS TASK SCHEDULER
 # Scheduler Settings
 # -----------------------------
 MAIN_RUN_TIME  = os.getenv("MAIN_RUN_TIME",  "08:00")
@@ -53,6 +53,18 @@ MAPPING_FILE = os.path.join("config", "bench_mapping.json")
 NEXT_DATE_GRACE_DAYS = int(os.getenv("NEXT_DATE_GRACE_DAYS", 4))
 BENCH_CUTOFF_HOUR    = int(os.getenv("BENCH_CUTOFF_HOUR", 19))
 DATE_CUTOFF_HOUR    = int(os.getenv("DATE_CUTOFF_HOUR", 19))
+
+
+# ------------------------------
+# Sheets
+# ------------------------------
+SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE", "config/service_account.json")
+
+
+
+
+
+
 
 
 
