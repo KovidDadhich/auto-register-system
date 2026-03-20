@@ -56,8 +56,9 @@ DAY_COLORS = {
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python scripts/setup_sheet.py <year>")
+        print("Usage: python scripts/setup_sheet.py <year> [--sheets-only]")
         print("Example: python scripts/setup_sheet.py 2026")
+        print("Example: python scripts/setup_sheet.py 2026 --sheets-only")
         sys.exit(1)
 
     try:
@@ -65,6 +66,8 @@ def main():
     except ValueError:
         print(f"Invalid year: {sys.argv[1]}")
         sys.exit(1)
+
+    sheets_only = "--sheets-only" in sys.argv
 
     sheet_id = os.getenv(f"SHEET_ID_{year}")
     if not sheet_id:
@@ -75,10 +78,45 @@ def main():
     creds     = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
     gc        = gspread.authorize(creds)
     workbook  = gc.open_by_key(sheet_id)
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # --sheets-only: skip Master Sheet, only create two fetch sheets
+    # ══════════════════════════════════════════════════════════════════════════
+    if sheets_only:
+        print(f"\nWorkbook: {workbook.title}")
+        print("Mode: --sheets-only")
+        print("This will create/overwrite 'Daily_Causelist_Fetch' and 'Case_History_Fetch'.")
+        print("Master Sheet will NOT be touched.")
+        confirm = input("Type 'yes' to confirm: ").strip().lower()
+        if confirm != "yes":
+            print("Aborted.")
+            sys.exit(0)
+ 
+        logger.info("Creating Daily_Causelist_Fetch sheet...")
+        dcf_sheet = _get_or_create_worksheet(workbook, "Daily_Causelist_Fetch")
+        _setup_daily_causelist_sheet(dcf_sheet, workbook)
+        time.sleep(API_DELAY)
+ 
+        logger.info("Creating Case_History_Fetch sheet...")
+        chf_sheet = _get_or_create_worksheet(workbook, "Case_History_Fetch")
+        _setup_case_history_sheet(chf_sheet, workbook)
+        time.sleep(API_DELAY)
+ 
+        print(f"\n✓ Daily_Causelist_Fetch sheet created.")
+        print(f"✓ Case_History_Fetch sheet created.")
+        _print_apps_script_instructions()
+        sys.exit(0)
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Full setup: rebuild Master Sheet + create both fetch sheets
+    # ══════════════════════════════════════════════════════════════════════════
     worksheet = _get_or_create_worksheet(workbook, WORKSHEET_NAME)
 
     # ── Confirm ───────────────────────────────────────────────────────────────
     print(f"\nThis will CLEAR and REBUILD the '{WORKSHEET_NAME}' sheet for year {year}.")
+    print(f"It will also create 'Daily_Causelist_Fetch' and 'Case_History_Fetch' sheets.")
     print(f"Workbook: {workbook.title}")
     confirm = input("Type 'yes' to confirm: ").strip().lower()
     if confirm != "yes":
@@ -145,10 +183,159 @@ def main():
     logger.info("Step 6/6 | Applying merges and color formatting...")
     _apply_enhanced_formatting(worksheet, all_dates, total_rows)
 
-    logger.info("Setup complete.")
+    logger.info("Master Sheet setup complete.")
+ 
+
+    # ── Create Daily_Causelist_Fetch sheet ────────────────────────────────────
+    logger.info("Creating Daily_Causelist_Fetch sheet...")
+    dcf_sheet = _get_or_create_worksheet(workbook, "Daily_Causelist_Fetch")
+    _setup_daily_causelist_sheet(dcf_sheet, workbook)
+    time.sleep(API_DELAY)
+ 
+    # ── Create Case_History_Fetch sheet ───────────────────────────────────────
+    logger.info("Creating Case_History_Fetch sheet...")
+    chf_sheet = _get_or_create_worksheet(workbook, "Case_History_Fetch")
+    _setup_case_history_sheet(chf_sheet, workbook)
+    time.sleep(API_DELAY)
+ 
+    logger.info("All setup complete.")
     print(f"\n✓ Master Sheet for {year} is ready.")
     print(f"  Columns : {total_cols} ({len(all_dates)} dates × {DYNAMIC_COLS} + {STATIC_COLS} static)")
     print(f"  Cases   : {len(cases)}")
+    print(f"\n✓ Daily_Causelist_Fetch sheet created.")
+    print(f"\n✓ Case_History_Fetch sheet created.")
+    _print_apps_script_instructions()
+ 
+ 
+def _print_apps_script_instructions():
+    print(f"\n{'='*60}")
+    print("IMPORTANT: Apps Script setup required for Case_History_Fetch.")
+    print("Follow these steps:")
+    print("  1. Open the Google Sheet in browser (use Incognito if needed)")
+    print("  2. Go to Extensions → Apps Script")
+    print("  3. Delete any existing code")
+    print("  4. Paste the code from: scripts/case_history_apps_script.js")
+    print("  5. Save (Ctrl+S) and close Apps Script editor")
+    print("  6. Type a Case ID in cell B1 of Case_History_Fetch to test")
+    print(f"{'='*60}")
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DAILY_CAUSELIST_FETCH SHEET SETUP
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+def _setup_daily_causelist_sheet(worksheet: gspread.Worksheet, workbook: gspread.Spreadsheet):
+    """
+    Sets up Daily_Causelist_Fetch sheet.
+ 
+    Layout:
+      A1: "Select Date:"   B1: [user types DD/MM/YYYY here]
+      A2: blank
+      A3: headers (Case ID, Case Name, District, Prakaran, Adhiniyam,
+                   Old Case ID, Prev Hearing Date, Current Hearing Date,
+                   Bench Name, Bench Number, Bench Member, Status,
+                   Comments, Next Hearing Date)
+      A4 onwards: FILTER formula pulls matching rows from Master Sheet
+ 
+    Formula logic:
+      - MATCH finds the column in Master Sheet row 1 that starts with typed date
+      - That column = start of Prev Hearing Date for that date group
+      - Current Hearing Date is offset +1 from that
+      - FILTER returns all rows where Current Hearing Date = typed date
+      - Then selects static cols + 8 dynamic cols for that date
+    """
+    worksheet.clear()
+    time.sleep(API_DELAY)
+ 
+    # ── Labels and input cell ─────────────────────────────────────────────────
+    worksheet.update("A1:B1", [["Select Date (DD/MM/YYYY):", ""]])
+    time.sleep(API_DELAY)
+ 
+    # ── Headers row 3 ────────────────────────────────────────────────────────
+    headers = [
+        "Case ID", "Case Name", "District", "Prakaran", "Adhiniyam", "Old Case ID",
+        "Prev Hearing Date", "Current Hearing Date", "Bench Name", "Bench Number",
+        "Bench Member", "Status", "Comments", "Next Hearing Date"
+    ]
+    worksheet.update("A3:N3", [headers])
+    time.sleep(API_DELAY)
+ 
+    # ── Formula in A4 ─────────────────────────────────────────────────────────
+    # MATCH finds col number where row1 header starts with typed date (wildcard)
+    # OFFSET then grabs the 8 dynamic columns starting from that col
+    # FILTER returns rows where Current Hearing Date (col+1) matches input
+    formula = (
+        '=IFERROR('
+        'LET('
+        'dateInput, B1, '
+        'masterSheet, INDIRECT("\'Master Sheet\'!A:ZZZ"), '
+        # Find column index of the matching date group in Master row 1
+        'dateCol, MATCH(dateInput&"*", INDIRECT("\'Master Sheet\'!1:1"), 0), '
+        # Static cols: B,C,D,E,F,G (Case ID to Old Case ID) from Master
+        'staticData, INDIRECT("\'Master Sheet\'!B3:G"), '
+        # Dynamic data: 8 cols starting at dateCol from Master rows 3 onwards
+        'dynData, INDEX(INDIRECT("\'Master Sheet\'!A3:ZZZ"), 0, SEQUENCE(1,8,dateCol)), '
+        # Current Hearing Date is offset +1 from dateCol (2nd dynamic col)
+        'currentDateCol, INDEX(INDIRECT("\'Master Sheet\'!A3:ZZZ"), 0, dateCol+1), '
+        # FILTER rows where Current Hearing Date = input date
+        'FILTER(HSTACK(staticData, dynData), currentDateCol=dateInput)'
+        '),'
+        '"No data found for this date."'
+        ')'
+    )
+    worksheet.update("A4", [[formula]])
+    time.sleep(API_DELAY)
+ 
+    logger.info("Daily_Causelist_Fetch sheet set up.")
+ 
+ 
+# ══════════════════════════════════════════════════════════════════════════════
+# CASE_HISTORY_FETCH SHEET SETUP
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+def _setup_case_history_sheet(worksheet: gspread.Worksheet, workbook: gspread.Spreadsheet):
+    """
+    Sets up Case_History_Fetch sheet structure.
+    Actual data population is handled by Apps Script (case_history_apps_script.js).
+ 
+    Layout:
+      A1: "Case ID:"   B1: [user types case ID here]
+      A3: Static column headers
+      A4: Static column values (filled by Apps Script)
+      A5: Dynamic column headers
+      A6 onwards: One row per hearing date, newest first (filled by Apps Script)
+    """
+    worksheet.clear()
+    time.sleep(API_DELAY)
+ 
+    # ── Label and input cell ──────────────────────────────────────────────────
+    worksheet.update("A1:B1", [["Case ID:", ""]])
+    time.sleep(API_DELAY)
+ 
+    # ── Static headers row 3 ─────────────────────────────────────────────────
+    static_headers = ["Case ID", "Case Name", "District", "Prakaran", "Adhiniyam", "Old Case ID"]
+    worksheet.update("A3", [static_headers])
+    time.sleep(API_DELAY)
+ 
+    # ── Dynamic headers row 5 ────────────────────────────────────────────────
+    dynamic_headers = [
+        "Hearing Date", "Prev Hearing Date", "Current Hearing Date",
+        "Bench Name", "Bench Number", "Bench Member",
+        "Status", "Comments", "Next Hearing Date"
+    ]
+    worksheet.update("A5", [dynamic_headers])
+    time.sleep(API_DELAY)
+ 
+    # ── Placeholder text ──────────────────────────────────────────────────────
+    worksheet.update("A4", [["← Type a Case ID in B1 to load data"]])
+    worksheet.update("A6", [["← Hearing history will appear here after typing Case ID"]])
+    time.sleep(API_DELAY)
+ 
+    logger.info("Case_History_Fetch sheet structure set up.")
+
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
