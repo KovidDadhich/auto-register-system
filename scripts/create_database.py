@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import logging
-from config.settings import DB_PATH
+# from config.settings import DB_PATH
 
 # ── Logging setup ──────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 # ── Path setup ─────────────────────────────────────────────────────────────────
 # BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# DB_PATH  = os.path.join(BASE_DIR, "database", "register.db")
+DB_PATH  = os.path.join("database", "register.db")
 
 
 def get_connection():
