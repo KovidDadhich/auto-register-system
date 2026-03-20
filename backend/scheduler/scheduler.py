@@ -27,8 +27,8 @@ from backend.scraper.task_processor import (
     run_fetch_bench_details,
 )
 from backend.catchUp.catchUpScanner import run_catchup_scanner
-# Placeholder — will be implemented in Sheets Sync step
-# from backend.sheets.sheets_syncer import run_sheets_sync
+
+from backend.sheets_sync.sheets_sync import run_sheets_sync
 
 logger = get_logger(__name__)
 
@@ -84,10 +84,10 @@ def run_main_pipeline():
         logger.error("Main pipeline stopped.")
         return
 
-    # ── Step 3: Sheets Sync (placeholder) ────────────────────────────────────
+    # ── Step 3: Sheets Sync ────────────────────────────────────
     logger.info("Step 3/3 | Sheets Sync starting...")
     try:
-        _sheets_sync_placeholder()
+        run_sheets_sync()
         logger.info("Step 3/3 | Sheets Sync complete.")
     except Exception as e:
         logger.error(f"Step 3/3 | Sheets Sync FAILED: {e}")
