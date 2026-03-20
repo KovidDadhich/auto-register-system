@@ -36,10 +36,19 @@ STATIC_HEADERS    = ["S. No.", "Case ID", "Case Name", "District", "Prakaran", "
 DYNAMIC_HEADERS   = ["Prev Hearing Date", "Current Hearing Date", "Bench Name", "Bench Number", "Bench Member", "Status", "Comments", "Next Hearing Date"]
 WORKSHEET_NAME    = "Master Sheet"
 API_DELAY         = 1.5    # seconds between API calls
-MERGE_BATCH_SIZE  = 50     # merge requests per batch_update call
+MERGE_BATCH_SIZE  = 200     # merge requests per batch_update call
 COL_WRITE_CHUNK   = 200    # columns per row write chunk
 CELL_WRITE_CHUNK  = 500    # cells per update_cells call
 
+DAY_COLORS = {
+    "Monday":    {"dark": "#fce5cd", "light": "#fff2cc"}, # Orange
+    "Tuesday":   {"dark": "#d9ead3", "light": "#f1f8e9"}, # Green
+    "Wednesday": {"dark": "#cfe2f3", "light": "#e8f0fe"}, # Cornflower
+    "Thursday":  {"dark": "#d9d2e9", "light": "#f3e5f5"}, # Purple
+    "Friday":    {"dark": "#fff2cc", "light": "#fffde7"}, # Yellow
+    "Saturday":  {"dark": "#d0e0e3", "light": "#e0f7fa"}, # Cyan
+    "Sunday":    {"dark": "#ead1dc", "light": "#fce4ec"}, # Magenta
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
@@ -133,8 +142,8 @@ def main():
         logger.info("Step 5/5 | No cases in DB yet. Skipping case rows.")
 
     # ── Step 6: Apply merged cells ────────────────────────────────────────────
-    logger.info("Step 6/6 | Applying merged cells...")
-    _apply_all_merges(worksheet, all_dates)
+    logger.info("Step 6/6 | Applying merges and color formatting...")
+    _apply_enhanced_formatting(worksheet, all_dates, total_rows)
 
     logger.info("Setup complete.")
     print(f"\n✓ Master Sheet for {year} is ready.")
@@ -145,6 +154,14 @@ def main():
 # ══════════════════════════════════════════════════════════════════════════════
 # SHEET WRITING HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
+
+def hex_to_rgb(hex_str):
+    hex_str = hex_str.lstrip('#')
+    return {
+        "red": int(hex_str[0:2], 16)/255.0,
+        "green": int(hex_str[2:4], 16)/255.0,
+        "blue": int(hex_str[4:6], 16)/255.0
+    }
 
 def _write_row_chunked(worksheet: gspread.Worksheet, row_number: int, values: list):
     """Writes a full row in column chunks to stay within API limits."""
@@ -183,30 +200,142 @@ def _write_case_rows(worksheet: gspread.Worksheet, cases: list):
             time.sleep(API_DELAY)
 
 
-def _apply_all_merges(worksheet: gspread.Worksheet, all_dates: list):
-    """Applies merged cells for row 1 in batches."""
-    merge_requests = []
+# ── New Formatting Helper Function ───────────────────────────────────────────
 
-    # Merge static header A1:G1
-    merge_requests.append(_merge_request(
-        sheet_id=worksheet.id, row=0, col_start=0, col_end=STATIC_COLS - 1
-    ))
+def _apply_enhanced_formatting(worksheet, all_dates, total_rows):
+    """Applies merges, background colors, and black separators in one go."""
+    all_requests = []
+    sheet_id = worksheet.id
+    total_cols = STATIC_COLS + (len(all_dates) * DYNAMIC_COLS)
 
-    # Merge each date group
-    for i in range(len(all_dates)):
+    # 1. STATIC SECTION (Col A - G)
+    # Merge A1:G1
+    all_requests.append(_merge_request(sheet_id, 0, 0, STATIC_COLS - 1))
+    
+    # Format Static Headers (Rows 1-2, Cols A-G): Bold, Centered, No Color
+    all_requests.append({
+        "repeatCell": {
+            "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 2, "startColumnIndex": 0, "endColumnIndex": STATIC_COLS},
+            "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER", "textFormat": {"bold": True}}},
+            "fields": "userEnteredFormat(horizontalAlignment,textFormat)"
+        }
+    })
+
+    # Alternating Grey for Static Data (Row 3 onwards, Col A-G)
+    # We use a Conditional Format Rule for "Even/Odd" rows to make it look like a zebra-stripe
+    all_requests.append({
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [{"sheetId": sheet_id, "startRowIndex": 2, "endRowIndex": total_rows, "startColumnIndex": 0, "endColumnIndex": STATIC_COLS}],
+                "booleanRule": {
+                    "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=ISODD(ROW())"}]},
+                    "format": {"backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.95}} # Light Grey
+                }
+            },
+            "index": 0
+        }
+    })
+    all_requests.append({
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [{"sheetId": sheet_id, "startRowIndex": 2, "endRowIndex": total_rows, "startColumnIndex": 0, "endColumnIndex": STATIC_COLS}],
+                "booleanRule": {
+                    "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=ISEVEN(ROW())"}]},
+                    "format": {"backgroundColor": {"red": 0.85, "green": 0.85, "blue": 0.85}} # Darker Grey
+                }
+            },
+            "index": 1
+        }
+    })
+
+    # DYNAMIC DATE SECTIONS
+    # 2. Iterate through each date to create Merges, Colors, and Borders
+    for i, date_str in enumerate(all_dates):
         col_start = STATIC_COLS + (i * DYNAMIC_COLS)
-        merge_requests.append(_merge_request(
-            sheet_id=worksheet.id, row=0,
-            col_start=col_start, col_end=col_start + DYNAMIC_COLS - 1
-        ))
+        col_end = col_start + DYNAMIC_COLS - 1
+        
+        # Determine the day of the week
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        day_name = dt.strftime("%A")
+        colors = DAY_COLORS.get(day_name, {"dark": "#ffffff", "light": "#ffffff"})
 
-    # Send in batches
-    for i in range(0, len(merge_requests), MERGE_BATCH_SIZE):
-        batch = merge_requests[i:i + MERGE_BATCH_SIZE]
+        # A. Merge Date Header (Row 1)
+        all_requests.append(_merge_request(sheet_id, 0, col_start, col_end))
+
+        # B. Apply Dark Color & Centering to Header (Row 1) AND Sub-headers (Row 2)
+        all_requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 0, "endRowIndex": 2, # Rows 1 and 2
+                    "startColumnIndex": col_start, "endColumnIndex": col_end + 1
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": hex_to_rgb(colors["dark"]),
+                        "horizontalAlignment": "CENTER",
+                        "textFormat": {"bold": True}
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)"
+            }
+        })
+
+        # C. Apply Light Color to Data Rows (Row 3 onwards)
+        all_requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 2, "endRowIndex": total_rows,
+                    "startColumnIndex": col_start, "endColumnIndex": col_end + 1
+                },
+                "cell": {"userEnteredFormat": {"backgroundColor": hex_to_rgb(colors["light"])}},
+                "fields": "userEnteredFormat.backgroundColor"
+            }
+        })
+
+        # 3. GLOBAL BORDERS (Apply to Col A to the very last Column)
+        # Dashed Horizontal Separators for all rows starting from Row 3
+        all_requests.append({
+            "updateBorders": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 2, "endRowIndex": total_rows, "startColumnIndex": 0, "endColumnIndex": total_cols},
+                "innerHorizontal": {"style": "DASHED", "color": {"red": 0, "green": 0, "blue": 0}}
+            }
+        })
+
+        # Solid Borders for Headers (Row 1 and 2)
+        all_requests.append({
+            "updateBorders": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 2, "startColumnIndex": 0, "endColumnIndex": total_cols},
+                "innerHorizontal": {"style": "SOLID", "color": {"red": 0, "green": 0, "blue": 0}},
+                "bottom": {"style": "SOLID_MEDIUM", "color": {"red": 0, "green": 0, "blue": 0}}
+            }
+        })
+
+        # Vertical Block Separators (Black Medium lines between dates and after Static section)
+        # Add one for the end of Static columns
+        all_requests.append({
+            "updateBorders": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": total_rows, "startColumnIndex": STATIC_COLS - 1, "endColumnIndex": STATIC_COLS},
+                "right": {"style": "SOLID_MEDIUM", "color": {"red": 0, "green": 0, "blue": 0}}
+            }
+        })
+
+        # Add vertical separators for each date block
+        for i in range(len(all_dates)):
+            col_end = STATIC_COLS + (i * DYNAMIC_COLS) + DYNAMIC_COLS - 1
+            all_requests.append({
+                "updateBorders": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": total_rows, "startColumnIndex": col_end, "endColumnIndex": col_end + 1},
+                    "right": {"style": "SOLID_MEDIUM", "color": {"red": 0, "green": 0, "blue": 0}}
+                }
+            })
+
+    # Execute all formatting in batches to prevent timeout
+    for i in range(0, len(all_requests), MERGE_BATCH_SIZE):
+        batch = all_requests[i:i + MERGE_BATCH_SIZE]
         worksheet.spreadsheet.batch_update({"requests": batch})
-        logger.debug(f"Merge batch {i // MERGE_BATCH_SIZE + 1} | {len(batch)} merges.")
-        if i + MERGE_BATCH_SIZE < len(merge_requests):
-            time.sleep(API_DELAY)
+        time.sleep(0.5) # Small buffer
 
 
 # ══════════════════════════════════════════════════════════════════════════════
