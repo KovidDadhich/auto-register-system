@@ -30,13 +30,17 @@ def create_tables(conn):
     # ── Table A: Cases (Static) ────────────────────────────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Cases (
-            case_pk     INTEGER PRIMARY KEY AUTOINCREMENT,
-            case_id     TEXT    UNIQUE NOT NULL,
-            case_name   TEXT,
-            district    TEXT,
-            prakaran    TEXT,
-            adhiniyam   TEXT,
-            old_case_id TEXT
+            case_pk              INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id              TEXT    UNIQUE NOT NULL,
+            case_name            TEXT,
+            district             TEXT,
+            tehsil               TEXT,
+            old_case_id          TEXT,
+            connected_prakaran   TEXT,
+            prakaran             TEXT,
+            adhiniyam            TEXT,
+            to_be_continued      TEXT,
+            client_in_contact    TEXT
         )
     """)
     log.info("Table 'Cases' created (or already exists).")

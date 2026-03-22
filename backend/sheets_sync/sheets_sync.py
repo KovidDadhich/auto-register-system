@@ -40,12 +40,12 @@ from backend.db.db_writer import get_conn
 logger = get_logger(__name__)
 
 SCOPES              = ["https://www.googleapis.com/auth/spreadsheets"]
-STATIC_COLS         = 7
+STATIC_COLS         = 11
 DYNAMIC_COLS        = 8
 HEADER_ROW          = 1
 SUBHEADER_ROW       = 2
 DATA_START_ROW      = 3
-STATIC_HEADERS      = ["S. No.", "Case ID", "Case Name", "District", "Prakaran", "Adhiniyam", "Old Case ID"]
+STATIC_HEADERS      = ["S. No.", "Case ID", "Case Name", "District", "Tehsil", "Old Case ID", "Connected Prakaran", "Prakaran", "Adhiniyam", "To Be Continued?", "Client In Contact?"]
 DYNAMIC_HEADERS     = ["Prev Hearing Date", "Current Hearing Date", "Bench Name", "Bench Number", "Bench Member", "Status", "Comments", "Next Hearing Date"]
 COMMENTS_COL_OFFSET = 6
 WORKSHEET_NAME      = "Master Sheet"
@@ -180,14 +180,18 @@ def _insert_case_row(worksheet: gspread.Worksheet, sheet_state: dict, hearing: s
     }]})
     time.sleep(API_DELAY_SECONDS)
 
-    worksheet.update(f"A{insert_row}:G{insert_row}", [[
+    worksheet.update(f"A{insert_row}:K{insert_row}", [[
         insert_pos + 1,
         hearing["case_id"],
-        hearing["case_name"]   or "",
-        hearing["district"]    or "",
-        hearing["prakaran"]    or "",
-        hearing["adhiniyam"]   or "",
-        hearing["old_case_id"] or "",
+        hearing["case_name"]          or "",
+        hearing["district"]           or "",
+        hearing["tehsil"]             or "",
+        hearing["old_case_id"]        or "",
+        hearing["connected_prakaran"] or "",
+        hearing["prakaran"]           or "",
+        hearing["adhiniyam"]          or "",
+        hearing["to_be_continued"]    or "",
+        hearing["client_in_contact"]  or "",
     ]])
 
     sheet_state["case_to_row"][case_id] = insert_row
@@ -283,8 +287,10 @@ def _fetch_unsynced_hearings(year: int) -> list:
                    h.bench_name, h.bench_number, h.bench_member,
                    h.status, h.comments, h.next_hearing_date,
                    h.updated_at, h.last_synced_at,
-                   c.case_id, c.case_name, c.district,
-                   c.prakaran, c.adhiniyam, c.old_case_id
+                   c.case_id, c.case_name, c.district, c.tehsil,
+                   c.old_case_id, c.connected_prakaran,
+                   c.prakaran, c.adhiniyam,
+                   c.to_be_continued, c.client_in_contact
             FROM Hearings h
             JOIN Cases c ON h.case_pk = c.case_pk
             WHERE strftime('%Y', h.current_hearing_date) = ?

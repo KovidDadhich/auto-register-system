@@ -30,9 +30,9 @@ logger = get_logger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 SCOPES            = ["https://www.googleapis.com/auth/spreadsheets"]
-STATIC_COLS       = 7
+STATIC_COLS       = 11
 DYNAMIC_COLS      = 8
-STATIC_HEADERS    = ["S. No.", "Case ID", "Case Name", "District", "Prakaran", "Adhiniyam", "Old Case ID"]
+STATIC_HEADERS    = ["S. No.", "Case ID", "Case Name", "District", "Tehsil", "Old Case ID", "Connected Prakaran", "Prakaran", "Adhiniyam", "To Be Continued?", "Client In Contact?"]
 DYNAMIC_HEADERS   = ["Prev Hearing Date", "Current Hearing Date", "Bench Name", "Bench Number", "Bench Member", "Status", "Comments", "Next Hearing Date"]
 WORKSHEET_NAME    = "Master Sheet"
 API_DELAY         = 1.5    # seconds between API calls
@@ -254,17 +254,25 @@ def _setup_daily_causelist_sheet(worksheet: gspread.Worksheet, workbook: gspread
  
     # ── Headers row 3 ────────────────────────────────────────────────────────
     headers = [
-        "Case ID", "Case Name", "District", "Prakaran", "Adhiniyam", "Old Case ID",
+        "Case ID", "Case Name", "District", "Tehsil", "Old Case ID",
+        "Connected Prakaran", "Prakaran", "Adhiniyam",
+        "To Be Continued?", "Client In Contact?",
         "Prev Hearing Date", "Current Hearing Date", "Bench Name", "Bench Number",
         "Bench Member", "Status", "Comments", "Next Hearing Date"
     ]
-    worksheet.update("A3:N3", [headers])
+    worksheet.update("A3:R3", [headers])
     time.sleep(API_DELAY)
  
     # ── Formula in A4 ─────────────────────────────────────────────────────────
     # MATCH finds col number where row1 header starts with typed date (wildcard)
     # OFFSET then grabs the 8 dynamic columns starting from that col
     # FILTER returns rows where Current Hearing Date (col+1) matches input
+    
+    # Static cols in Master Sheet: A=S.No., B=Case ID ... K=Client In Contact?
+    # Dynamic cols start at col L (STATIC_COLS + 1 = 12th col, 1-based)
+    # So staticData = B3:K (cols 2-11, Case ID to Client In Contact?)
+    # Dynamic data: 8 cols starting at dateCol
+    # Current Hearing Date = dateCol + 1 (2nd dynamic col)
     formula = (
         '=IFERROR('
         'LET('
@@ -273,7 +281,7 @@ def _setup_daily_causelist_sheet(worksheet: gspread.Worksheet, workbook: gspread
         # Find column index of the matching date group in Master row 1
         'dateCol, MATCH(dateInput&"*", INDIRECT("\'Master Sheet\'!1:1"), 0), '
         # Static cols: B,C,D,E,F,G (Case ID to Old Case ID) from Master
-        'staticData, INDIRECT("\'Master Sheet\'!B3:G"), '
+        'staticData, INDIRECT("\'Master Sheet\'!B3:K"), '
         # Dynamic data: 8 cols starting at dateCol from Master rows 3 onwards
         'dynData, INDEX(INDIRECT("\'Master Sheet\'!A3:ZZZ"), 0, SEQUENCE(1,8,dateCol)), '
         # Current Hearing Date is offset +1 from dateCol (2nd dynamic col)
@@ -314,7 +322,9 @@ def _setup_case_history_sheet(worksheet: gspread.Worksheet, workbook: gspread.Sp
     time.sleep(API_DELAY)
  
     # ── Static headers row 3 ─────────────────────────────────────────────────
-    static_headers = ["Case ID", "Case Name", "District", "Prakaran", "Adhiniyam", "Old Case ID"]
+    static_headers = ["Case ID", "Case Name", "District", "Tehsil", "Old Case ID",
+        "Connected Prakaran", "Prakaran", "Adhiniyam",
+        "To Be Continued?", "Client In Contact?"]
     worksheet.update("A3", [static_headers])
     time.sleep(API_DELAY)
  
@@ -371,11 +381,15 @@ def _write_case_rows(worksheet: gspread.Worksheet, cases: list):
         for col_idx, val in enumerate([
             sno,
             case["case_id"],
-            case["case_name"]   or "",
-            case["district"]    or "",
-            case["prakaran"]    or "",
-            case["adhiniyam"]   or "",
-            case["old_case_id"] or "",
+            case["case_name"]          or "",
+            case["district"]           or "",
+            case["tehsil"]             or "",
+            case["old_case_id"]        or "",
+            case["connected_prakaran"] or "",
+            case["prakaran"]           or "",
+            case["adhiniyam"]          or "",
+            case["to_be_continued"]    or "",
+            case["client_in_contact"]  or "",
         ], start=1):
             all_cells.append(gspread.Cell(row=row_num, col=col_idx, value=val))
 
@@ -534,7 +548,9 @@ def _fetch_cases() -> list:
     try:
         return conn.execute(
             """
-            SELECT case_pk, case_id, case_name, district, prakaran, adhiniyam, old_case_id
+            SELECT case_pk, case_id, case_name, district, tehsil,
+                   old_case_id, connected_prakaran, prakaran,
+                   adhiniyam, to_be_continued, client_in_contact
             FROM Cases ORDER BY case_id ASC
             """
         ).fetchall()

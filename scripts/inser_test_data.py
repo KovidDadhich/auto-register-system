@@ -1,10 +1,10 @@
 '''
-Purpose: Interactive script to insert test cases into the database.
-Inserts one Cases record + one Hearings record per case.
+Purpose: Interactive script to insert test data into the database.
+Inserts one Case + one Hearings record at a time.
 Hearings record has both bench_fetch_at and next_date_fetch_at set to today
 so the full pipeline can be tested immediately.
 
-Run with:
+Usage:
     python scripts/insert_test_data.py
 '''
 
@@ -30,160 +30,166 @@ def get_conn():
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def prompt(label: str, required: bool = True) -> str:
-    """Prompts user for input. If required, keeps asking until non-empty."""
     while True:
         value = input(f"  {label}: ").strip()
         if value:
             return value
         if not required:
             return ""
-        print(f"  ✗ {label} is required. Please enter a value.")
+        print(f"  x {label} is required. Please enter a value.")
 
 
 def prompt_date(label: str) -> str:
-    """Prompts user for a date in DD/MM/YYYY format. Converts to YYYY-MM-DD for DB."""
     while True:
         value = input(f"  {label} (DD/MM/YYYY): ").strip()
-        if not value:
-            print(f"  ✗ {label} is required.")
-            continue
         try:
             day, month, year = value.split("/")
-            parsed = date(int(year), int(month), int(day))
-            return parsed.isoformat()  # store as YYYY-MM-DD in DB
+            db_date = date(int(year), int(month), int(day))
+            return db_date.isoformat()
         except Exception:
-            print("  ✗ Invalid date format. Please use DD/MM/YYYY.")
+            print("  x Invalid date format. Please use DD/MM/YYYY.")
 
 
-def case_exists(conn: sqlite3.Connection, case_id: str) -> bool:
-    """Returns True if a case with this case_id already exists."""
+def case_exists(conn, case_id: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM Cases WHERE case_id = ?", (case_id,)
     ).fetchone()
     return row is not None
 
 
-def insert_case(conn: sqlite3.Connection, data: dict) -> int:
-    """Inserts a Cases record. Returns the new case_pk."""
-    cursor = conn.execute(
-        """
-        INSERT INTO Cases (case_id, case_name, district, prakaran, adhiniyam, old_case_id)
-        VALUES (:case_id, :case_name, :district, :prakaran, :adhiniyam, :old_case_id)
-        """,
-        data,
-    )
-    return cursor.lastrowid
+def show_summary(case: dict, hearing: dict):
+    print("\n  -- Summary ---------------------------------------------------")
+    print(f"  Case ID              : {case['case_id']}")
+    print(f"  Case Name            : {case['case_name']}")
+    print(f"  District             : {case['district']}")
+    print(f"  Tehsil               : {case['tehsil'] or '-'}")
+    print(f"  Old Case ID          : {case['old_case_id'] or '-'}")
+    print(f"  Connected Prakaran   : {case['connected_prakaran'] or '-'}")
+    print(f"  Prakaran             : {case['prakaran']}")
+    print(f"  Adhiniyam            : {case['adhiniyam']}")
+    print(f"  To Be Continued?     : {case['to_be_continued'] or '-'}")
+    print(f"  Client In Contact?   : {case['client_in_contact'] or '-'}")
+    print(f"  -------------------------------------------------------------")
+    print(f"  Current Hearing      : {hearing['current_hearing_date']}")
+    print(f"  Prev Hearing         : {hearing['prev_hearing_date'] or '-'}")
+    print(f"  bench_fetch_at       : {hearing['bench_fetch_at']}  <- set to today")
+    print(f"  next_date_fetch_at   : {hearing['next_date_fetch_at']} <- set to today")
+    print(f"  -------------------------------------------------------------")
 
 
-def insert_hearing(conn: sqlite3.Connection, case_pk: int, current_hearing_date: str):
-    """
-    Inserts a Hearings record with:
-    - current_hearing_date = as entered
-    - bench_fetch_at       = today (so fetch_bench runs today)
-    - next_date_fetch_at   = today (so fetch_next_date runs today)
-    """
-    today = date.today().isoformat()
+def insert_case_and_hearing(conn, case: dict, hearing: dict):
+    try:
+        conn.execute(
+            """
+            INSERT INTO Cases (
+                case_id, case_name, district, tehsil, old_case_id,
+                connected_prakaran, prakaran, adhiniyam,
+                to_be_continued, client_in_contact
+            )
+            VALUES (
+                :case_id, :case_name, :district, :tehsil, :old_case_id,
+                :connected_prakaran, :prakaran, :adhiniyam,
+                :to_be_continued, :client_in_contact
+            )
+            """,
+            case,
+        )
 
-    conn.execute(
-        """
-        INSERT INTO Hearings (
-            case_pk,
-            current_hearing_date,
-            bench_fetch_at,
-            next_date_fetch_at
-        ) VALUES (?, ?, ?, ?)
-        """,
-        (case_pk, current_hearing_date, today, today),
-    )
+        case_pk = conn.execute(
+            "SELECT case_pk FROM Cases WHERE case_id = ?", (case["case_id"],)
+        ).fetchone()["case_pk"]
+
+        conn.execute(
+            """
+            INSERT INTO Hearings (
+                case_pk,
+                prev_hearing_date,
+                current_hearing_date,
+                bench_fetch_at,
+                next_date_fetch_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                case_pk,
+                hearing["prev_hearing_date"] or None,
+                hearing["current_hearing_date"],
+                hearing["bench_fetch_at"],
+                hearing["next_date_fetch_at"],
+            ),
+        )
+
+        conn.commit()
+        print(f"\n  Case '{case['case_id']}' inserted successfully (case_pk={case_pk}).")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"\n  x Insert failed: {e}")
+        raise
 
 
-def show_summary(conn: sqlite3.Connection, case_pk: int, case_id: str):
-    """Prints inserted records for confirmation."""
-    case = conn.execute(
-        "SELECT * FROM Cases WHERE case_pk = ?", (case_pk,)
-    ).fetchone()
-    hearing = conn.execute(
-        "SELECT * FROM Hearings WHERE case_pk = ? ORDER BY hearing_id DESC LIMIT 1",
-        (case_pk,)
-    ).fetchone()
-
-    print("\n  ── Inserted Successfully ─────────────────────────────")
-    print(f"  Cases record:")
-    print(f"    case_pk             : {case['case_pk']}")
-    print(f"    case_id             : {case['case_id']}")
-    print(f"    case_name           : {case['case_name']}")
-    print(f"    district            : {case['district']}")
-    print(f"    prakaran            : {case['prakaran']}")
-    print(f"    adhiniyam           : {case['adhiniyam']}")
-    print(f"    old_case_id         : {case['old_case_id'] or '—'}")
-    print(f"  Hearings record:")
-    print(f"    hearing_id          : {hearing['hearing_id']}")
-    print(f"    current_hearing_date: {hearing['current_hearing_date']}")
-    print(f"    bench_fetch_at      : {hearing['bench_fetch_at']}  ← set to today")
-    print(f"    next_date_fetch_at  : {hearing['next_date_fetch_at']}  ← set to today")
-    print("  ─────────────────────────────────────────────────────\n")
-
-
-# ── Main Loop ──────────────────────────────────────────────────────────────────
 def main():
-    print("\n" + "=" * 60)
-    print("  Register System — Test Data Entry")
-    print(f"  Database: {DB_PATH}")
-    print(f"  Today   : {date.today().strftime('%d-%m-%Y')}")
+    today = date.today().isoformat()
+    today_display = date.today().strftime("%d-%m-%Y")
+
+    print("=" * 60)
+    print("  Register System - Test Data Entry")
+    print(f"  Today's date: {today_display}")
+    print("  Both bench_fetch_at and next_date_fetch_at will be")
+    print("  set to today to enable full pipeline testing.")
     print("=" * 60)
 
     conn = get_conn()
-    total_inserted = 0
 
     while True:
-        print(f"\n── Case #{total_inserted + 1} ─────────────────────────────────────")
-        print("  Enter case details (press Enter to skip optional fields):\n")
+        print("\n-- New Case Entry ---------------------------------------------")
 
-        # ── Case fields ───────────────────────────────────────────────────────
-        case_id = prompt("case_id (required)")
+        case_id = prompt("Case ID (as on GCMS)")
 
-        # Check for duplicates
         if case_exists(conn, case_id):
-            print(f"\n  ⚠ case_id '{case_id}' already exists in DB. Skipping.\n")
+            print(f"  x Case ID '{case_id}' already exists in database. Skipping.")
         else:
-            case_name   = prompt("case_name (required)")
-            district    = prompt("district (required)")
-            prakaran    = prompt("prakaran (required)")
-            adhiniyam   = prompt("adhiniyam (required)")
-            old_case_id = prompt("old_case_id (optional, press Enter to skip)", required=False)
+            case = {
+                "case_id"            : case_id,
+                "case_name"          : prompt("Case Name"),
+                "district"           : prompt("District"),
+                "tehsil"             : prompt("Tehsil (press Enter to skip)", required=False),
+                "old_case_id"        : prompt("Old Case ID (press Enter to skip)", required=False),
+                "connected_prakaran" : prompt("Connected Prakaran (press Enter to skip)", required=False),
+                "prakaran"           : prompt("Prakaran"),
+                "adhiniyam"          : prompt("Adhiniyam"),
+                "to_be_continued"    : prompt("To Be Continued? (press Enter to skip)", required=False),
+                "client_in_contact"  : prompt("Client In Contact? (press Enter to skip)", required=False),
+            }
 
-            # ── Hearing fields ─────────────────────────────────────────────────
-            print()
-            current_hearing_date = prompt_date("current_hearing_date")
+            print("\n  Hearing details:")
+            current_hearing_date = prompt_date("Current Hearing Date")
+            prev_hearing_date = ""
+            add_prev = input("  Add previous hearing date? (y/n): ").strip().lower()
+            if add_prev == "y":
+                prev_hearing_date = prompt_date("Previous Hearing Date")
 
-            # ── Insert ─────────────────────────────────────────────────────────
-            try:
-                case_pk = insert_case(conn, {
-                    "case_id"    : case_id,
-                    "case_name"  : case_name,
-                    "district"   : district,
-                    "prakaran"   : prakaran,
-                    "adhiniyam"  : adhiniyam,
-                    "old_case_id": old_case_id or None,
-                })
-                insert_hearing(conn, case_pk, current_hearing_date)
-                conn.commit()
-                total_inserted += 1
-                show_summary(conn, case_pk, case_id)
+            hearing = {
+                "prev_hearing_date"   : prev_hearing_date or None,
+                "current_hearing_date": current_hearing_date,
+                "bench_fetch_at"      : today,
+                "next_date_fetch_at"  : today,
+            }
 
-            except Exception as e:
-                conn.rollback()
-                print(f"\n  ✗ Insert failed: {e}\n")
+            show_summary(case, hearing)
+            confirm = input("\n  Confirm insert? (y/n): ").strip().lower()
 
-        # ── Continue prompt ────────────────────────────────────────────────────
-        again = input("  Add another case? (y/n): ").strip().lower()
+            if confirm == "y":
+                insert_case_and_hearing(conn, case, hearing)
+            else:
+                print("  Skipped.")
+
+        again = input("\n  Add another case? (y/n): ").strip().lower()
         if again != "y":
             break
 
     conn.close()
-    print(f"\n{'=' * 60}")
-    print(f"  Done. {total_inserted} case(s) inserted.")
-    print(f"{'=' * 60}\n")
+    print("\n  Done. Exiting.")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
