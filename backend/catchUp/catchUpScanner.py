@@ -18,6 +18,7 @@ SHUTDOWN_BENCH_VALUE = "N/A - system shutdown"
 SHUTDOWN_NOTE_BENCH  = "Bench details could not be extracted due to system shutdown."
 SHUTDOWN_NOTE_NEXT   = "Next hearing date fetched late — possible missed hearing due to system shutdown."
 
+name = 1
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
